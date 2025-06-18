@@ -23,9 +23,29 @@ fun DashboardScreen(
 ) {
 
     val deviceId by dashboardDeviceViewModel.deviceId.collectAsState()
+    val deviceInfo by dashboardDeviceViewModel.deviceInfo.collectAsState()
+
+    LaunchedEffect(deviceId) {
+        if (deviceId != null) {
+            dashboardDeviceViewModel.fetchDeviceInfo()
+        }
+    }
 
     Column {
         Text(text = "Device ID: ${deviceId ?: "no registrado"}")
+
+
+        when {
+            deviceId == null -> Text("Registra tu dispositivo primero")
+            deviceInfo == null -> Text("Cargando información...")
+            else -> {
+                Text(text = "Nombre: ${deviceInfo!!.lastSeen}")
+                Text(text = "Estado: ${deviceInfo!!.ip}")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
 
         Spacer(modifier = Modifier.height(16.dp))
 
