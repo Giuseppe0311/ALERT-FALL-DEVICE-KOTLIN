@@ -3,6 +3,7 @@ package com.example.cuidadoabuelitonative
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
@@ -16,6 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.compose.rememberNavController
 import com.example.cuidadoabuelitonative.components.AppLayout
 import com.example.cuidadoabuelitonative.navigation.NavGraph
+import com.example.cuidadoabuelitonative.services.FallDetectionService
 import com.example.cuidadoabuelitonative.ui.theme.CuidadoAbuelitoNativeTheme
 
 class MainActivity : ComponentActivity() {
@@ -66,7 +68,11 @@ class MainActivity : ComponentActivity() {
                     .launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-
+        val prefs = getSharedPreferences("CuidadoAbuelito", MODE_PRIVATE)
+        val id = prefs.getString("device_id", null)
+        id?.let {
+            FallDetectionService.startDetection(this, it)
+        }
         // 3) Tu UI Compose
         setContent {
             CuidadoAbuelitoNativeTheme {

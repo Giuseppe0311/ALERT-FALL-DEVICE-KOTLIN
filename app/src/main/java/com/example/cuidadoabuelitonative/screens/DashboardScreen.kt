@@ -47,13 +47,16 @@ fun DashboardScreen(
 
     LaunchedEffect(Unit) {
         dashboardDeviceViewModel.getDeviceIdPreferences()
+        dashboardDeviceViewModel.checkAlarmStatus()
     }
 
     LaunchedEffect(deviceId) {
         if (deviceId != null) {
-            dashboardDeviceViewModel.startPolling(5000)
+            dashboardDeviceViewModel.startBackgroundDetection()
+            dashboardDeviceViewModel.startUIPolling()
         } else {
-            dashboardDeviceViewModel.stopPolling()
+            dashboardDeviceViewModel.stopBackgroundDetection()
+            dashboardDeviceViewModel.stopUIPolling()
         }
     }
 

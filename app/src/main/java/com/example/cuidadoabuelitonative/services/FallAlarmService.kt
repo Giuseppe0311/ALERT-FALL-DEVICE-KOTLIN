@@ -67,11 +67,11 @@ class FallAlarmService : Service() {
                 startAlarmSystem(fallTime)
             }
             ACTION_STOP_ALARM -> {
-                stopAlarmSystem()
-                stopSelf()
+                Log.d("FallAlarmService", "STOP_ALARM recibido")
+                stopAlarmSystem() // Cambio: usar stopAlarmSystem() completo
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -111,7 +111,6 @@ class FallAlarmService : Service() {
         startForeground(NOTIFICATION_ID, notification)
 
         startRingtoneSound()
-
         startContinuousVibration()
 
         Log.d("FallAlarmService", "Alarm system started for fall at: $fallTime")
@@ -155,7 +154,9 @@ class FallAlarmService : Service() {
 
     private fun startRingtoneSound() {
         try {
-            mediaPlayer?.release()
+            // Liberar MediaPlayer anterior si existe
+            stopSound()
+
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -168,19 +169,32 @@ class FallAlarmService : Service() {
                 val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
                 setDataSource(this@FallAlarmService, ringtoneUri)
                 isLooping = true
-                prepare()
-                start()
+
+                setOnPreparedListener {
+                    if (isAlarming) { // Solo iniciar si la alarma sigue activa
+                        start()
+                        Log.d("FallAlarmService", "Ringtone started successfully")
+                    }
+                }
+
+                setOnErrorListener { _, what, extra ->
+                    Log.e("FallAlarmService", "MediaPlayer error: what=$what, extra=$extra")
+                    tryFallbackRingtone()
+                    true
+                }
+
+                prepareAsync() // Usar prepareAsync para evitar bloqueos
             }
-            Log.d("FallAlarmService", "Ringtone started successfully")
         } catch (e: Exception) {
             Log.e("FallAlarmService", "Error starting ringtone sound", e)
-            // Fallback: intentar con tono de notificación
             tryFallbackRingtone()
         }
     }
 
     private fun tryFallbackRingtone() {
         try {
+            stopSound()
+
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -193,13 +207,34 @@ class FallAlarmService : Service() {
                 val fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
                 setDataSource(this@FallAlarmService, fallbackUri)
                 isLooping = true
-                prepare()
-                start()
+
+                setOnPreparedListener {
+                    if (isAlarming) {
+                        start()
+                        Log.d("FallAlarmService", "Fallback ringtone started")
+                    }
+                }
+
+                prepareAsync()
             }
-            Log.d("FallAlarmService", "Fallback ringtone started")
         } catch (e: Exception) {
             Log.e("FallAlarmService", "Error starting fallback ringtone", e)
         }
+    }
+
+    private fun stopSound() {
+        mediaPlayer?.apply {
+            try {
+                if (isPlaying) {
+                    stop()
+                }
+                reset()
+                release()
+            } catch (e: Exception) {
+                Log.e("FallAlarmService", "Error stopping sound", e)
+            }
+        }
+        mediaPlayer = null
     }
 
     private fun startContinuousVibration() {
@@ -219,29 +254,38 @@ class FallAlarmService : Service() {
     }
 
     private fun stopAlarmSystem() {
+        Log.d("FallAlarmService", "Stopping alarm system...")
+
         isAlarming = false
 
         // Detener sonido
-        mediaPlayer?.apply {
-            if (isPlaying) {
-                stop()
-            }
-            release()
-        }
-        mediaPlayer = null
+        stopSound()
 
         // Detener vibración
-        vibrator?.cancel()
+        try {
+            vibrator?.cancel()
+        } catch (e: Exception) {
+            Log.e("FallAlarmService", "Error stopping vibration", e)
+        }
 
         // Cancelar notificación
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.cancel(NOTIFICATION_ID)
+        try {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.cancel(NOTIFICATION_ID)
+        } catch (e: Exception) {
+            Log.e("FallAlarmService", "Error canceling notification", e)
+        }
 
-        Log.d("FallAlarmService", "Alarm system stopped")
+        // Detener el servicio foreground
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+
+        Log.d("FallAlarmService", "Alarm system stopped completely")
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d("FallAlarmService", "Service being destroyed")
         stopAlarmSystem()
     }
 }
