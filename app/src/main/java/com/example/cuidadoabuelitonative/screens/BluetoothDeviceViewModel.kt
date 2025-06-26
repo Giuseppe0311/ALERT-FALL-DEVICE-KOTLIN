@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import androidx.core.content.edit
+import com.juul.kable.AndroidPeripheral
 
 class BluetoothDeviceViewModel(
     application: Application
@@ -314,17 +315,10 @@ class BluetoothDeviceViewModel(
                 .launchIn(this)
 
             // Construir y fragmentar comando
-            val jsonPayload = """{"service":"gw","action":"scan"}"""
-            val fullMessage = "<<START>>$jsonPayload<<END>>"
-            val bytes = fullMessage.toByteArray(Charsets.UTF_8)
-            val chunkSize = 20
-
-            for (offset in bytes.indices step chunkSize) {
-                val end = minOf(offset + chunkSize, bytes.size)
-                val slice = bytes.copyOfRange(offset, end)
-                peripheral.write(writeChar, slice, WriteType.WithResponse)
-                delay(30)
-            }
+            val jsonPayload = """{"a":"s"}"""
+            val bytes = jsonPayload.toByteArray(Charsets.UTF_8)
+            Log.d("BLE_WiFi", "JSON a enviar: $jsonPayload")
+            peripheral.write(writeChar, bytes, WriteType.WithoutResponse)
             Log.d(
                 "BLE_WiFi",
                 "Comando de escaneo WiFi enviado en ${bytes.size} bytes (Intento ${wifiScanRetryCount + 1}/$maxWifiRetries)"
@@ -350,7 +344,7 @@ class BluetoothDeviceViewModel(
         _isWifiConnected.value = false
 
         try {
-            val peripheral = activePeripheral!!
+            val peripheral = activePeripheral!! as AndroidPeripheral
 
             val services = peripheral.services ?: run {
                 Log.d("BLE_CONNECTING_WIFI", "Descubriendo servicios...")
@@ -390,6 +384,39 @@ class BluetoothDeviceViewModel(
                 return@launch
             }
 
+            // Preparar el JSON primero para calcular su tamaño
+            val jsonPayload = """{"a":"c","ssid":"$ssid","password":"$password"}"""
+            val bytes = jsonPayload.toByteArray(Charsets.UTF_8)
+            val jsonSize = bytes.size
+
+            Log.d("BLE_CONNECTING_WIFI", "JSON a enviar: $jsonPayload")
+            Log.d("BLE_CONNECTING_WIFI", "Tamaño del JSON: $jsonSize bytes")
+
+            // Calcular MTU óptimo basado en el tamaño del JSON
+            val minMtuNeeded = jsonSize + 3 // +3 bytes para headers BLE/ATT
+            val optimalMtu = when {
+                minMtuNeeded <= 23 -> 23 // MTU mínimo BLE
+                minMtuNeeded <= 185 -> minMtuNeeded + 20 // Buffer adicional
+                else -> 247 // MTU máximo común
+            }
+
+            Log.d("BLE_CONNECTING_WIFI", "MTU mínimo necesario: $minMtuNeeded, MTU óptimo a solicitar: $optimalMtu")
+
+            // Solicitar MTU óptimo basado en el tamaño del JSON
+            var negotiatedMtu = 23 // MTU por defecto de BLE
+            try {
+                negotiatedMtu = peripheral.requestMtu(optimalMtu)
+                Log.d("BLE_CONNECTING_WIFI", "MTU negociado exitosamente: $negotiatedMtu bytes")
+                delay(100) // Dar tiempo para que se establezca el MTU
+
+                if (negotiatedMtu < minMtuNeeded) {
+                    Log.w("BLE_CONNECTING_WIFI", "MTU negociado ($negotiatedMtu) es menor al necesario ($minMtuNeeded). Los datos se fragmentarán.")
+                } else {
+                    Log.d("BLE_CONNECTING_WIFI", "MTU negociado ($negotiatedMtu) es suficiente para enviar el JSON sin fragmentación")
+                }
+            } catch (e: Exception) {
+                Log.w("BLE_CONNECTING_WIFI", "No se pudo negociar MTU mayor: ${e.message}. Usando MTU por defecto ($negotiatedMtu). Los datos podrían fragmentarse.")
+            }
 
             notificationJob?.cancel()
 
@@ -406,33 +433,20 @@ class BluetoothDeviceViewModel(
                 }
                 .launchIn(this)
 
+            // Enviar el comando
+            peripheral.write(writeChar, bytes, WriteType.WithoutResponse)
+            delay(30)
 
-            val jsonPayload =
-                """{"service":"gw","action":"connect","ssid":"$ssid","password":"$password"}"""
-            Log.d("BLE_CONNECTING_WIFI", "JSON: $jsonPayload")
-            val fullMessage = "<<START>>$jsonPayload<<END>>"
-            val bytes = fullMessage.toByteArray(Charsets.UTF_8)
-            val chunkSize = 20
-
-            for (offset in bytes.indices step chunkSize) {
-                val end = minOf(offset + chunkSize, bytes.size)
-                val slice = bytes.copyOfRange(offset, end)
-                peripheral.write(writeChar, slice, WriteType.WithResponse)
-                delay(30)
-            }
-            Log.d(
-                "BLE_CONNECTING_WIFI",
-                "Comando de conexion WiFi enviado en ${bytes.size} bytes (Intento ${wifiScanRetryCount + 1}/$maxWifiRetries)"
+            Log.d("BLE_CONNECTING_WIFI",
+                "Comando de conexión WiFi enviado en $jsonSize bytes con MTU negociado: $negotiatedMtu (Intento ${wifiScanRetryCount + 1}/$maxWifiRetries)"
             )
 
         } catch (e: Exception) {
-            Log.e("BLE_CONNECTING_WIFI", "Error Connectando al  WiFi", e)
-            _errorMessage.value = "Error al Connectar el  WiFi: ${e.message}"
+            Log.e("BLE_CONNECTING_WIFI", "Error Conectando al WiFi", e)
+            _errorMessage.value = "Error al Conectar el WiFi: ${e.message}"
             _isWifiConnecting.value = false
         }
     }
-
-
     private suspend fun disconnectSync() {
         Log.d("BluetoothScan", "Desconectando...")
         activePeripheral?.let { per ->
@@ -514,11 +528,14 @@ class BluetoothDeviceViewModel(
             try {
                 // 4) Parsea sólo el array "networks"
                 val jsonObj = org.json.JSONObject(jsonString)
-                val arr = jsonObj.getJSONArray("networks")
+                val arr = jsonObj.getJSONArray("w")
                 val list = mutableListOf<WiFiNetwork>()
                 for (i in 0 until arr.length()) {
-                    val ssid = arr.getString(i)
-                    list.add(WiFiNetwork(ssid = ssid))
+                    val item = arr.getJSONObject(i)
+                    val ssid = item.getString("s")              // SSID
+                    val rssi = item.getInt("r")                  // RSSI
+                    val auth = item.getString("a")               // Auth (p.e. "x")
+                    list.add(WiFiNetwork(ssid = ssid, rssi = rssi, auth = auth))
                 }
 
                 // 5) Actualiza el StateFlow
@@ -594,7 +611,7 @@ class BluetoothDeviceViewModel(
                 Log.d("BLE_CONNECTING_WIFI", "Respuesta del dispositivo: $jsonObj")
                 val status = jsonObj.getString("status")
                 if (status.equals("error")) {
-                    _wifiConnectionFailMessage.value = jsonObj.getString("message")
+                    _wifiConnectionFailMessage.value = jsonObj.getString("detail")
                 } else if (status.equals("success")) {
                     val deviceId = if (jsonObj.has("device_id")) {
                         jsonObj.getString("device_id")

@@ -85,11 +85,7 @@ class FallAlarmService : Service() {
         ).apply {
             description = "Notificaciones de caídas detectadas"
             enableVibration(true)
-            setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build())
+            setSound(null, null)
         }
 
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -114,7 +110,7 @@ class FallAlarmService : Service() {
         val notification = createAlarmNotification(fallTime)
         startForeground(NOTIFICATION_ID, notification)
 
-        startAlarmSound()
+        startRingtoneSound()
 
         startContinuousVibration()
 
@@ -152,30 +148,57 @@ class FallAlarmService : Service() {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(false)
             .setOngoing(true)
-            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+            .setSound(null)
             .setVibrate(longArrayOf(0, 1000, 500, 1000))
             .build()
     }
 
-    private fun startAlarmSound() {
+    private fun startRingtoneSound() {
         try {
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
 
-                val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                setDataSource(this@FallAlarmService, alarmUri)
+                // Usar el tono de llamada predeterminado
+                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                setDataSource(this@FallAlarmService, ringtoneUri)
                 isLooping = true
                 prepare()
                 start()
             }
+            Log.d("FallAlarmService", "Ringtone started successfully")
         } catch (e: Exception) {
-            Log.e("FallAlarmService", "Error starting alarm sound", e)
+            Log.e("FallAlarmService", "Error starting ringtone sound", e)
+            // Fallback: intentar con tono de notificación
+            tryFallbackRingtone()
+        }
+    }
+
+    private fun tryFallbackRingtone() {
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+
+                // Usar tono de notificación como fallback
+                val fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                setDataSource(this@FallAlarmService, fallbackUri)
+                isLooping = true
+                prepare()
+                start()
+            }
+            Log.d("FallAlarmService", "Fallback ringtone started")
+        } catch (e: Exception) {
+            Log.e("FallAlarmService", "Error starting fallback ringtone", e)
         }
     }
 
